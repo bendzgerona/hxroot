@@ -1,0 +1,5 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# ==============================================================================
+# Bionic wrapper for hxunconvert
+# ==============================================================================
+exec /data/data/com.termux/files/usr/bin/grun /data/data/com.termux/files/usr/glibc/bin/hxunconvert "$@"

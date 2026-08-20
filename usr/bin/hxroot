@@ -1,0 +1,6 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# ==============================================================================
+# Bionic wrapper for hxroot (using clean grun without flags)
+# ==============================================================================
+GLIBC_PREFIX="/data/data/com.termux/files/usr/glibc"
+exec /data/data/com.termux/files/usr/bin/grun "$GLIBC_PREFIX/bin/hxroot" "$GLIBC_PREFIX" "$@"

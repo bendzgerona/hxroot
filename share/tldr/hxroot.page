@@ -1,0 +1,13 @@
+# hxroot
+
+> Modern fakechroot+fakeroot re-implementation with automatic proot fallback for Termux glibc.
+> More information: https://github.com/Neltharion01/hxroot
+
+- Run a command inside hxroot:
+  hxroot {{command}}
+
+- Convert absolute symlinks in rootfs prior to use:
+  hxconvert {{rootfs_path}}
+
+- Revert absolute symlink conversion:
+  hxunconvert {{rootfs_path}}

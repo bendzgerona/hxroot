@@ -1,0 +1,4 @@
+*.d
+*.o
+libhxroot.so
+hxroot
