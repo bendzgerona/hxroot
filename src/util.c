@@ -1,0 +1,98 @@
+#include <stdio.h>
+#include <stdarg.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <sys/file.h>
+
+#include "hxroot.h"
+
+static void strmove(char *dst, char *src) {
+    memmove(dst, src, strlen(src) + 1);
+}
+
+PRIVATE size_t HxCountArgv(char *const argv[]) {
+    size_t count = 0;
+    while(argv[count] != 0) count += 1;
+    return count;
+}
+
+PRIVATE void eprintf(char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+
+    vfprintf(stderr, fmt, args);
+
+    va_end(args);
+}
+
+static bool HxShouldExpand(const char *path) {
+    // Not chrooted?
+    if(!HxRoot) return false;
+    // Not absolute?
+    if(path[0] != '/') return false;
+    // Check excludes...
+    for(int i = 0; HxBinds[i] != 0; i++) {
+        size_t path_len = strlen(path);
+        size_t prefix_len = strlen(HxBinds[i]);
+        if(path_len < prefix_len) continue;
+        char lastchar = path[prefix_len];
+        // Compare by prefix
+        if(strncmp(path, HxBinds[i], prefix_len) == 0 && (lastchar == '/' || lastchar == '\0')) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+PRIVATE size_t HxExpandedLen(const char *path) {
+    if(!HxShouldExpand(path)) {
+        return 0;
+    } else {
+        return HxRootLen + strlen(path) + 1;
+    }
+}
+
+PRIVATE const char *HxExpandPath(char *dest, const char *path) {
+    if(!HxShouldExpand(path)) return path;
+    char *next = stpcpy(dest, HxRoot);
+    strcpy(next, path);
+    return dest;
+}
+
+PRIVATE void HxUnexpandPath(char *path) {
+    // If prefix equals to root...
+    if(strncmp(path, HxRoot, HxRootLen) == 0) {
+        // ...move everything after it to beginning
+        strmove(path, path + HxRootLen);
+        // And if it is empty, add a slash
+        if(path[0] == '\0') strcpy(path, "/");
+    }
+}
+
+PRIVATE HxFlock_t HxFlock(int fd) {
+    if(flock(fd, LOCK_EX) == -1) return -1;
+    return fd;
+}
+
+PRIVATE void HxAutoCloseFd(int *fd) {
+    if(*fd != -1) {
+        close(*fd);
+        *fd = -1;
+    }
+}
+
+PRIVATE void HxAutoFreeChar(char **ptr) {
+    if(*ptr != NULL) {
+        free(*ptr);
+        *ptr = NULL;
+    }
+}
+
+PRIVATE void HxAutoUnlock(HxFlock_t *fl) {
+    if(*fl >= 0) {
+        flock(*fl, LOCK_UN);
+        *fl = -1;
+    }
+}

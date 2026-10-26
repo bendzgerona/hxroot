@@ -1,0 +1,179 @@
+#!/bin/sh
+# fakechroot — High-performance hxroot-powered chroot virtualization
+set -e
+
+INVOCATION="$(basename "$0")"
+DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -z "$LIBFAKECHROOT" ]; then
+    if [ -n "$LIBHXROOT" ] && [ -f "$LIBHXROOT" ]; then
+        LIBFAKECHROOT="$LIBHXROOT"
+    elif [ -f "$DIR/libfakechroot.so" ]; then
+        LIBFAKECHROOT="$DIR/libfakechroot.so"
+    elif [ -f "$DIR/libhxroot.so" ]; then
+        LIBFAKECHROOT="$DIR/libhxroot.so"
+    elif [ -f "$DIR/../lib/libfakechroot.so" ]; then
+        LIBFAKECHROOT="$DIR/../lib/libfakechroot.so"
+    elif [ -f "$DIR/../lib/libhxroot.so" ]; then
+        LIBFAKECHROOT="$DIR/../lib/libhxroot.so"
+    elif [ -f "$HOME/.local/lib/libfakechroot.so" ]; then
+        LIBFAKECHROOT="$HOME/.local/lib/libfakechroot.so"
+    elif [ -f "$HOME/.local/lib/libhxroot.so" ]; then
+        LIBFAKECHROOT="$HOME/.local/lib/libhxroot.so"
+    else
+        LIBFAKECHROOT="$DIR/libfakechroot.so"
+    fi
+fi
+export LIBFAKECHROOT
+export LIBHXROOT="$LIBFAKECHROOT"
+
+# Parse optional arguments
+BASE=""
+EXCLUDES="${FAKECHROOT_EXCLUDE_PATH:-/dev:/proc:/sys}"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -b|--base)
+            BASE="$2"
+            shift 2
+            ;;
+        -e|--exclude)
+            EXCLUDES="$2"
+            shift 2
+            ;;
+        -d|--debug)
+            export FAKECHROOT_DEBUG=1
+            export HxDebug=1
+            shift
+            ;;
+        -c)
+            # Shell command flag, stop option parsing
+            break
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            # Ignore unknown flags for compatibility with original fakechroot options
+            shift
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+# If first positional argument is an existing directory, treat it as BASE (the hxroot way)
+if [ -z "$BASE" ] && [ $# -gt 0 ] && [ -d "$1" ]; then
+    BASE="$1"
+    shift
+fi
+
+# Auto-detect container root directory: rootfs as default, ROOT as fallback
+if [ -z "$FAKECHROOT_BASE" ] && [ -z "$BASE" ]; then
+    if [ -d "./rootfs" ]; then
+        BASE="./rootfs"
+    elif [ -d "../rootfs" ]; then
+        BASE="../rootfs"
+    elif [ -d "$DIR/../rootfs" ]; then
+        BASE="$DIR/../rootfs"
+    elif [ -d "./ROOT" ]; then
+        BASE="./ROOT"
+    elif [ -d "../ROOT" ]; then
+        BASE="../ROOT"
+    elif [ -d "$DIR/../ROOT" ]; then
+        BASE="$DIR/../ROOT"
+    fi
+fi
+
+# If BASE was given or detected, check if it contains nested rootfs (default) or ROOT (fallback)
+if [ -n "$BASE" ]; then
+    if [ -d "$BASE/rootfs" ]; then
+        BASE="$BASE/rootfs"
+    elif [ -d "$BASE/ROOT" ]; then
+        BASE="$BASE/ROOT"
+    fi
+fi
+
+# If no command given, default to shell if BASE or hxroot
+if [ $# -eq 0 ]; then
+    if [ "$INVOCATION" = "hxroot" ] || [ -n "$BASE" ]; then
+        set -- /bin/sh
+    else
+        echo "Usage: $INVOCATION [-b <base>] [-e <excludes>] [--] [base_dir] <command> [args...]" >&2
+        exit 1
+    fi
+fi
+
+# If next argument is -c, user passed shell string directly
+if [ "$1" = "-c" ]; then
+    set -- /bin/sh "$@"
+fi
+
+export FAKECHROOT=true
+[ -n "$BASE" ] && export FAKECHROOT_BASE="$(realpath "$BASE")"
+[ -n "$BASE" ] && export HxRoot="$FAKECHROOT_BASE"
+
+# Default excludes: always include host glibc hierarchy if present
+GLIBC_DIR="${GLIBC_PREFIX:-/data/data/com.termux/files/usr/glibc}"
+if [ -d "$GLIBC_DIR" ] && ! echo "$EXCLUDES" | grep -q "$GLIBC_DIR"; then
+    EXCLUDES="${EXCLUDES:+$EXCLUDES:}$GLIBC_DIR"
+fi
+
+export FAKECHROOT_EXCLUDE_PATH="$EXCLUDES"
+export HxBinds="$EXCLUDES"
+export HxL2s="${HxL2s:-1}"
+export HxUid="${HxUid:-0}"
+export HxGid="${HxGid:-0}"
+export PATH="${GLIBC_DIR:+$GLIBC_DIR/bin:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+# Auto-detect target rootfs dynamic linker if present
+if [ -n "$FAKECHROOT_BASE" ] && [ -z "$HxLinker" ]; then
+    if [ -f "$FAKECHROOT_BASE/lib/ld-linux-aarch64.so.1" ]; then
+        export HxLinker="$FAKECHROOT_BASE/lib/ld-linux-aarch64.so.1"
+    elif [ -f "$FAKECHROOT_BASE/lib64/ld-linux-aarch64.so.1" ]; then
+        export HxLinker="$FAKECHROOT_BASE/lib64/ld-linux-aarch64.so.1"
+    elif [ -f "$FAKECHROOT_BASE/usr/lib/ld-linux-aarch64.so.1" ]; then
+        export HxLinker="$FAKECHROOT_BASE/usr/lib/ld-linux-aarch64.so.1"
+    elif [ -f "$FAKECHROOT_BASE/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1" ]; then
+        export HxLinker="$FAKECHROOT_BASE/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1"
+    elif [ -f "$GLIBC_DIR/lib/ld-linux-aarch64.so.1" ]; then
+        export HxLinker="$GLIBC_DIR/lib/ld-linux-aarch64.so.1"
+    fi
+fi
+
+CMD="$1"
+shift
+
+CMD_BASE="${CMD##*/}"
+
+if [ -n "$FAKECHROOT_BASE" ] && [ "${CMD#/}" != "$CMD" ]; then
+    if [ -f "$FAKECHROOT_BASE$CMD" ]; then
+        TARGET_CMD="$FAKECHROOT_BASE$CMD"
+    elif [ -f "$FAKECHROOT_BASE/usr$CMD" ]; then
+        TARGET_CMD="$FAKECHROOT_BASE/usr$CMD"
+    elif [ -f "$GLIBC_DIR$CMD" ]; then
+        TARGET_CMD="$GLIBC_DIR$CMD"
+    elif [ -f "$GLIBC_DIR/bin/$CMD_BASE" ]; then
+        TARGET_CMD="$GLIBC_DIR/bin/$CMD_BASE"
+    else
+        TARGET_CMD="$CMD"
+    fi
+else
+    if [ -f "$GLIBC_DIR/bin/$CMD" ]; then
+        TARGET_CMD="$GLIBC_DIR/bin/$CMD"
+    elif command -v "$CMD" >/dev/null 2>&1; then
+        TARGET_CMD="$(command -v "$CMD")"
+    else
+        TARGET_CMD="$CMD"
+    fi
+fi
+
+# Preload libfakechroot strictly at point of exec to prevent child subshell poisoning
+export LD_PRELOAD="$LIBFAKECHROOT${LD_PRELOAD:+:$LD_PRELOAD}"
+
+if [ -n "$HxLinker" ] && [ -f "$TARGET_CMD" ]; then
+    exec "$HxLinker" "$TARGET_CMD" "$@"
+else
+    exec "$TARGET_CMD" "$@"
+fi
